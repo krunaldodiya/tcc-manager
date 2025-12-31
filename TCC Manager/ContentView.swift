@@ -9,6 +9,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = AppListViewModel()
+    @State private var showFullDiskAccessAlert = false
     
     var body: some View {
         VStack(spacing: 0) {
@@ -33,7 +34,33 @@ struct ContentView: View {
             )
         )
         .task {
+            // Check for Full Disk Access on launch
+            print("🔍 ContentView: Checking Full Disk Access on launch...")
+            let hasAccess = PermissionChecker.shared.hasFullDiskAccess()
+            print("🔍 ContentView: Full Disk Access result: \(hasAccess)")
+            
+            if !hasAccess {
+                print("⚠️ ContentView: Full Disk Access not granted - showing alert")
+                // Small delay to ensure UI is ready, then show alert on main thread
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                await MainActor.run {
+                    showFullDiskAccessAlert = true
+                }
+            } else {
+                print("✅ ContentView: Full Disk Access granted")
+            }
+            
             await viewModel.loadApps()
+        }
+        .alert("Full Disk Access Required", isPresented: $showFullDiskAccessAlert) {
+            Button("Open System Settings") {
+                PermissionChecker.shared.openFullDiskAccessSettings()
+            }
+            Button("Continue Anyway", role: .cancel) {
+                // User can continue, but features will be limited
+            }
+        } message: {
+            Text("TCC Manager needs Full Disk Access to read and manage TCC permissions.\n\nPlease grant Full Disk Access in System Settings, then restart the app.\n\nWithout this permission, the app cannot check or modify permissions.")
         }
     }
     

@@ -8,9 +8,9 @@
 import Foundation
 
 class AppDiscoveryService {
-    static let shared = AppDiscoveryService()
+    nonisolated static let shared = AppDiscoveryService()
     
-    private init() {}
+    nonisolated private init() {}
     
     func getInstalledApps() async -> [String] {
         var apps: Set<String> = []

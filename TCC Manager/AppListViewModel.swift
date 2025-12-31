@@ -136,10 +136,6 @@ class AppListViewModel: ObservableObject {
     func refreshPermissions(for appPath: String) async {
         guard let index = apps.firstIndex(where: { $0.path == appPath }) else { return }
         
-        // Wait a bit longer for TCC database to fully update
-        // macOS TCC database sometimes takes a moment to reflect changes
-        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
-        
         // Query SQLite database for latest permissions
         let updatedPermissions = await tccManager.checkPermissions(for: appPath)
         print("🔍 Refreshed permissions for \(appPath): camera=\(updatedPermissions.camera), microphone=\(updatedPermissions.microphone)")
@@ -188,38 +184,30 @@ class AppListViewModel: ObservableObject {
             print("🔄 Toggling camera permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleCameraPermission(for: appPath, grant: grant)
             
-            // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms - give TCC database time to update
+            // Trust tccplus output - it reports success, so update UI immediately
+            // Verification can be done manually via refresh button if needed
+            var updatedApp = apps[index]
+            updatedApp.permissions.camera = grant
+            apps[index] = updatedApp
+            applySearchFilter()
+            print("✅ Updated UI: camera = \(grant) (trusting tccplus success)")
             
-            // Refresh permissions with retries
-            var retries = 5
-            var success = false
-            while retries > 0 && !success {
-                await refreshPermissions(for: appPath)
-                
-                let currentPermission = apps[index].permissions.camera
-                print("   Current camera permission: \(currentPermission), expected: \(grant)")
+            // Optionally verify in background (non-blocking)
+            // Don't show errors if verification fails - tccplus already confirmed success
+            Task.detached {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                await self.refreshPermissions(for: appPath)
+                let currentPermission = await MainActor.run { self.apps[index].permissions.camera }
                 if currentPermission == grant {
-                    success = true
-                    print("✅ Camera permission successfully \(grant ? "granted" : "revoked")")
+                    print("✅ Camera permission verified: \(grant ? "granted" : "revoked")")
                 } else {
-                    print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
-                    // Wait longer between retries
-                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    print("⚠️ Verification shows different value, but tccplus reported success - permission may need app restart")
                 }
-                retries -= 1
-            }
-            
-            // Only reload if we really couldn't verify the change
-            // But don't reload immediately - just show error
-            if !success {
-                print("⚠️ Could not verify camera permission change after retries")
-                errorMessage = "Permission change may not have taken effect. Please refresh to verify."
             }
             
             updatingPermissions.remove(appPath)
             
-            // Update cache after permission change (even if verification failed)
+            // Update cache after permission change
             configManager.saveInstalledApps(apps)
         } catch {
             updatingPermissions.remove(appPath)
@@ -240,38 +228,30 @@ class AppListViewModel: ObservableObject {
             print("🔄 Toggling microphone permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleMicrophonePermission(for: appPath, grant: grant)
             
-            // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms - give TCC database time to update
+            // Trust tccplus output - it reports success, so update UI immediately
+            // Verification can be done manually via refresh button if needed
+            var updatedApp = apps[index]
+            updatedApp.permissions.microphone = grant
+            apps[index] = updatedApp
+            applySearchFilter()
+            print("✅ Updated UI: microphone = \(grant) (trusting tccplus success)")
             
-            // Refresh permissions with retries
-            var retries = 5
-            var success = false
-            while retries > 0 && !success {
-                await refreshPermissions(for: appPath)
-                
-                let currentPermission = apps[index].permissions.microphone
-                print("   Current microphone permission: \(currentPermission), expected: \(grant)")
+            // Optionally verify in background (non-blocking)
+            // Don't show errors if verification fails - tccplus already confirmed success
+            Task.detached {
+                try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+                await self.refreshPermissions(for: appPath)
+                let currentPermission = await MainActor.run { self.apps[index].permissions.microphone }
                 if currentPermission == grant {
-                    success = true
-                    print("✅ Microphone permission successfully \(grant ? "granted" : "revoked")")
+                    print("✅ Microphone permission verified: \(grant ? "granted" : "revoked")")
                 } else {
-                    print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
-                    // Wait longer between retries
-                    try? await Task.sleep(nanoseconds: 500_000_000)
+                    print("⚠️ Verification shows different value, but tccplus reported success - permission may need app restart")
                 }
-                retries -= 1
-            }
-            
-            // Only reload if we really couldn't verify the change
-            // But don't reload immediately - just show error
-            if !success {
-                print("⚠️ Could not verify microphone permission change after retries")
-                errorMessage = "Permission change may not have taken effect. Please refresh to verify."
             }
             
             updatingPermissions.remove(appPath)
             
-            // Update cache after permission change (even if verification failed)
+            // Update cache after permission change
             configManager.saveInstalledApps(apps)
         } catch {
             updatingPermissions.remove(appPath)

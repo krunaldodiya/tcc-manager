@@ -8,7 +8,7 @@
 import Foundation
 
 class ConfigManager {
-    static let shared = ConfigManager()
+    nonisolated static let shared = ConfigManager()
     
     private let configFileName = "installed_apps.json"
     
@@ -24,7 +24,7 @@ class ConfigManager {
         return appDir.appendingPathComponent(configFileName)
     }
     
-    private init() {}
+    nonisolated private init() {}
     
     // MARK: - Get Config Path (for debugging/verification)
     
