@@ -7,6 +7,7 @@
 
 import Foundation
 import SQLite3
+import AppKit
 
 class TCCManager {
     nonisolated static let shared = TCCManager()
@@ -211,7 +212,10 @@ class TCCManager {
             try await revokePermission(service: service, bundleId: bundleId)
         }
         
-        // Notify TCC daemon to refresh
+        // Small delay to ensure database changes are fully committed to disk
+        try? await Task.sleep(nanoseconds: 100_000_000) // 100ms
+        
+        // Notify TCC daemon and System Settings to refresh
         notifyTCCDaemon()
         
         print("✅ TCCManager: Successfully \(grant ? "granted" : "revoked") \(service) permission for \(bundleId)")
@@ -275,6 +279,13 @@ class TCCManager {
         guard stepResult == SQLITE_DONE else {
             throw TCCError.databaseError("Failed to execute INSERT: \(stepResult)")
         }
+        
+        // Force database to flush changes to disk immediately
+        sqlite3_exec(db, "PRAGMA synchronous = FULL;", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA wal_checkpoint(FULL);", nil, nil, nil)
+        
+        // Ensure changes are committed
+        sqlite3_exec(db, "COMMIT;", nil, nil, nil)
     }
     
     private func revokePermission(service: String, bundleId: String) async throws {
@@ -323,21 +334,70 @@ class TCCManager {
         guard stepResult == SQLITE_DONE else {
             throw TCCError.databaseError("Failed to execute DELETE: \(stepResult)")
         }
+        
+        // Force database to flush changes to disk immediately
+        sqlite3_exec(db, "PRAGMA synchronous = FULL;", nil, nil, nil)
+        sqlite3_exec(db, "PRAGMA wal_checkpoint(FULL);", nil, nil, nil)
+        
+        // Ensure changes are committed
+        sqlite3_exec(db, "COMMIT;", nil, nil, nil)
     }
     
     private func notifyTCCDaemon() {
-        // Send SIGHUP to tccd to trigger a refresh
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
-        process.arguments = ["-HUP", "tccd"]
+        // Multiple approaches to ensure System Settings updates in real-time
+        
+        // 1. Touch the database file to trigger file system notifications
+        let dbPath = tccDbUser.path
+        if FileManager.default.fileExists(atPath: dbPath) {
+            do {
+                try FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: dbPath)
+            } catch {
+                print("⚠️ Could not touch TCC database file: \(error.localizedDescription)")
+            }
+        }
+        
+        // 2. Send SIGHUP to all tccd processes (user and system)
+        let killallProcess = Process()
+        killallProcess.executableURL = URL(fileURLWithPath: "/usr/bin/killall")
+        killallProcess.arguments = ["-HUP", "tccd"]
         
         do {
-            try process.run()
-            process.waitUntilExit()
+            try killallProcess.run()
+            killallProcess.waitUntilExit()
         } catch {
-            // Ignore errors - daemon notification is best effort
-            print("⚠️ Could not notify TCC daemon: \(error.localizedDescription)")
+            print("⚠️ Could not notify TCC daemon via killall: \(error.localizedDescription)")
         }
+        
+        // 3. Post distributed notifications to notify System Settings
+        // These are the notifications that System Settings listens to for real-time updates
+        let notificationCenter = DistributedNotificationCenter.default()
+        
+        // Try multiple notification names that System Settings might listen to
+        let notificationNames = [
+            "com.apple.TCC.accessChanged",
+            "com.apple.preference.security.privacy",
+            "com.apple.TCC.databaseChanged",
+            "com.apple.security.TCCChanged"
+        ]
+        
+        for notificationName in notificationNames {
+            notificationCenter.post(
+                name: NSNotification.Name(notificationName),
+                object: nil,
+                userInfo: nil
+            )
+        }
+        
+        // 4. Also try posting to the local notification center
+        NotificationCenter.default.post(
+            name: NSNotification.Name("com.apple.TCC.accessChanged"),
+            object: nil
+        )
+        
+        // 5. Small delay to ensure database changes are flushed and notifications are processed
+        Thread.sleep(forTimeInterval: 0.15)
+        
+        print("✅ TCC daemon notification sent (killall + notifications)")
     }
 }
 
