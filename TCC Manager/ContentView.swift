@@ -134,7 +134,7 @@ struct ContentView: View {
                 TextField("Search applications...", text: $viewModel.searchText)
                     .textFieldStyle(.roundedBorder)
                     .frame(width: 250)
-                    .onChange(of: viewModel.searchText) { oldValue, newValue in
+                    .onChange(of: viewModel.searchText) { _ in
                         viewModel.applySearchFilter()
                     }
             }
