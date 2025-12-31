@@ -29,18 +29,14 @@ class AppListViewModel: ObservableObject {
         // Try to load from cache first (includes permissions)
         print("📂 Attempting to load from cache...")
         if let cachedApps = configManager.loadInstalledApps(), !cachedApps.isEmpty {
-            print("✅ Loaded \(cachedApps.count) apps from cache")
+            print("✅ Loaded \(cachedApps.count) apps from cache (with permissions)")
             apps = cachedApps
             applySearchFilter()
             isLoading = false
             
-            // Permissions are already loaded from cache, so we can show them immediately
-            // Optionally refresh permissions in background to ensure they're up to date
-            // (but don't block UI - show cached permissions first)
-            Task {
-                let appPaths = cachedApps.map { $0.path }
-                await refreshPermissionsFromDatabase(appPaths)
-            }
+            // Permissions are already loaded from cache, show them immediately
+            // No need to query SQLite - use cached permissions for instant loading
+            // User can click refresh button if they want to update from database
         } else {
             // No cache, load fresh
             print("📂 No cache found, loading from system...")
@@ -49,10 +45,14 @@ class AppListViewModel: ObservableObject {
     }
     
     private func refreshAppsFromSystem() async {
+        print("📱 Refresh: Discovering installed apps from system...")
         let appPaths = await appDiscovery.getInstalledApps()
+        print("📱 Refresh: Found \(appPaths.count) installed apps")
+        
         var loadedApps: [AppInfo] = []
         
         // Create AppInfo objects first (like Electron app - display apps first)
+        // This handles new apps (added) and removed apps (not in new list)
         for path in appPaths {
             var appInfo = AppInfo(path: path)
             appInfo.bundleId = tccManager.getBundleId(for: path)
@@ -60,17 +60,19 @@ class AppListViewModel: ObservableObject {
             loadedApps.append(appInfo)
         }
         
+        // Set apps array but keep isLoading = true so UI doesn't show yet
         apps = loadedApps
+        
+        // Load permissions from SQLite database for all apps
+        // This queries the TCC database to get the latest permission status
+        print("🔍 Refresh: Querying SQLite database for permissions...")
+        await loadPermissionsForApps(appPaths)
+        
+        // Now show UI with all permissions loaded
         applySearchFilter()
         isLoading = false
         
-        // Save to cache (synchronous, like docker-desktop-lite)
-        print("💾 Attempting to save \(loadedApps.count) apps to cache...")
-        configManager.saveInstalledApps(loadedApps)
-        print("💾 Save operation completed")
-        
-        // Load permissions asynchronously after displaying apps (matching Electron behavior)
-        await loadPermissionsForApps(appPaths)
+        print("✅ Refresh: All apps and permissions updated in JSON cache")
     }
     
     private func loadPermissionsForApps(_ appPaths: [String]) async {
@@ -80,27 +82,42 @@ class AppListViewModel: ObservableObject {
     
     private func refreshPermissionsFromDatabase(_ appPaths: [String]) async {
         // Query TCC database for latest permissions
-        await withTaskGroup(of: Void.self) { group in
+        print("🔍 Refresh: Querying permissions for \(appPaths.count) apps...")
+        
+        // Collect all permissions first (don't update UI yet)
+        var permissionsMap: [String: PermissionStatus] = [:]
+        
+        // Query all permissions in parallel
+        await withTaskGroup(of: (String, PermissionStatus).self) { group in
             for appPath in appPaths {
                 group.addTask {
                     let permissions = await self.tccManager.checkPermissions(for: appPath)
-                    
-                    // Update permissions in the main array
-                    await MainActor.run {
-                        if let index = self.apps.firstIndex(where: { $0.path == appPath }) {
-                            // Create a new AppInfo with updated permissions to trigger SwiftUI update
-                            var updatedApp = self.apps[index]
-                            updatedApp.permissions = permissions
-                            self.apps[index] = updatedApp
-                            self.applySearchFilter()
-                        }
-                    }
+                    return (appPath, permissions)
+                }
+            }
+            
+            // Collect all results
+            for await (appPath, permissions) in group {
+                permissionsMap[appPath] = permissions
+            }
+        }
+        
+        // Now update all apps at once with their permissions
+        // This ensures UI only shows once with all checkboxes already set
+        await MainActor.run {
+            for (index, _) in self.apps.enumerated() {
+                let appPath = self.apps[index].path
+                if let permissions = permissionsMap[appPath] {
+                    self.apps[index].permissions = permissions
                 }
             }
         }
         
         // Save updated apps with permissions to cache
+        // This ensures JSON has the latest permissions for all apps
+        print("💾 Refresh: Saving updated apps with permissions to JSON cache...")
         configManager.saveInstalledApps(apps)
+        print("✅ Refresh: JSON cache updated with latest permissions")
     }
     
     func applySearchFilter() {
@@ -132,10 +149,18 @@ class AppListViewModel: ObservableObject {
     }
     
     func reloadAllApps() async {
+        isLoading = true
+        errorMessage = nil
+        
         // Preserve search filter if active
         let currentSearchText = searchText
         
-        // Refresh apps from system (this will query SQLite for permissions)
+        print("🔄 Refresh: Removing JSON cache and recreating from system...")
+        
+        // Simply delete JSON and recreate it from scratch
+        configManager.clearCache()
+        
+        // Refresh apps from system (will recreate JSON with latest apps and permissions)
         await refreshAppsFromSystem()
         
         // Restore search filter
@@ -143,6 +168,8 @@ class AppListViewModel: ObservableObject {
             searchText = currentSearchText
             applySearchFilter()
         }
+        
+        print("✅ Refresh: Completed - JSON cache recreated with latest apps and permissions")
     }
     
     func toggleCameraPermission(for appPath: String, grant: Bool) async {
