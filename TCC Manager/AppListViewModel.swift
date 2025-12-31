@@ -184,16 +184,14 @@ class AppListViewModel: ObservableObject {
             print("🔄 Toggling camera permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleCameraPermission(for: appPath, grant: grant)
             
-            // Trust tccplus output - it reports success, so update UI immediately
-            // Verification can be done manually via refresh button if needed
+            // Update UI immediately after successful permission change
             var updatedApp = apps[index]
             updatedApp.permissions.camera = grant
             apps[index] = updatedApp
             applySearchFilter()
-            print("✅ Updated UI: camera = \(grant) (trusting tccplus success)")
+            print("✅ Updated UI: camera = \(grant)")
             
             // Optionally verify in background (non-blocking)
-            // Don't show errors if verification fails - tccplus already confirmed success
             Task.detached {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
                 await self.refreshPermissions(for: appPath)
@@ -201,7 +199,7 @@ class AppListViewModel: ObservableObject {
                 if currentPermission == grant {
                     print("✅ Camera permission verified: \(grant ? "granted" : "revoked")")
                 } else {
-                    print("⚠️ Verification shows different value, but tccplus reported success - permission may need app restart")
+                    print("⚠️ Verification shows different value - permission may need app restart")
                 }
             }
             
@@ -228,16 +226,14 @@ class AppListViewModel: ObservableObject {
             print("🔄 Toggling microphone permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleMicrophonePermission(for: appPath, grant: grant)
             
-            // Trust tccplus output - it reports success, so update UI immediately
-            // Verification can be done manually via refresh button if needed
+            // Update UI immediately after successful permission change
             var updatedApp = apps[index]
             updatedApp.permissions.microphone = grant
             apps[index] = updatedApp
             applySearchFilter()
-            print("✅ Updated UI: microphone = \(grant) (trusting tccplus success)")
+            print("✅ Updated UI: microphone = \(grant)")
             
             // Optionally verify in background (non-blocking)
-            // Don't show errors if verification fails - tccplus already confirmed success
             Task.detached {
                 try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
                 await self.refreshPermissions(for: appPath)
@@ -245,7 +241,7 @@ class AppListViewModel: ObservableObject {
                 if currentPermission == grant {
                     print("✅ Microphone permission verified: \(grant ? "granted" : "revoked")")
                 } else {
-                    print("⚠️ Verification shows different value, but tccplus reported success - permission may need app restart")
+                    print("⚠️ Verification shows different value - permission may need app restart")
                 }
             }
             

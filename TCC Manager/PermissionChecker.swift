@@ -7,6 +7,7 @@
 
 import Foundation
 import AppKit
+import SQLite3
 
 class PermissionChecker {
     nonisolated static let shared = PermissionChecker()
@@ -31,36 +32,38 @@ class PermissionChecker {
             return false
         }
         
-        // Try to actually query the database
+        // Try to actually query the database using native Swift SQLite
         // Just reading the file isn't enough - we need to be able to query it
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/sqlite3")
-        process.arguments = [tccDbPath, "SELECT 1 LIMIT 1;"]
+        var db: OpaquePointer?
+        let openResult = sqlite3_open_v2(tccDbPath, &db, SQLITE_OPEN_READONLY, nil)
         
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
-        
-        do {
-            try process.run()
-            process.waitUntilExit()
-            
-            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
-            
-            print("   SQLite query exit status: \(process.terminationStatus)")
-            if !errorOutput.isEmpty {
-                print("   SQLite error: \(errorOutput)")
-            }
-            
-            // If we can execute the query, we have Full Disk Access
-            let hasAccess = process.terminationStatus == 0
-            print("   ✅ Has Full Disk Access: \(hasAccess)")
-            return hasAccess
-        } catch {
-            print("   ❌ Failed to execute SQLite query: \(error.localizedDescription)")
+        guard openResult == SQLITE_OK, let db = db else {
+            print("   ❌ Failed to open TCC database: \(openResult)")
             return false
         }
+        
+        defer {
+            sqlite3_close(db)
+        }
+        
+        // Try a simple query
+        var statement: OpaquePointer?
+        let query = "SELECT 1 LIMIT 1;"
+        
+        guard sqlite3_prepare_v2(db, query, -1, &statement, nil) == SQLITE_OK else {
+            print("   ❌ Failed to prepare query")
+            return false
+        }
+        
+        defer {
+            sqlite3_finalize(statement)
+        }
+        
+        let stepResult = sqlite3_step(statement)
+        let hasAccess = stepResult == SQLITE_ROW || stepResult == SQLITE_DONE
+        
+        print("   ✅ Has Full Disk Access: \(hasAccess)")
+        return hasAccess
     }
     
     /// Show an alert asking the user to grant Full Disk Access
