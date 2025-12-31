@@ -55,6 +55,7 @@ class TCCManager {
         return await Task.detached { [tccDbUser, tccDbSystem] in
             let camera = Self.checkPermission(service: "kTCCServiceCamera", bundleId: bundleId, tccDbUser: tccDbUser, tccDbSystem: tccDbSystem)
             let microphone = Self.checkPermission(service: "kTCCServiceMicrophone", bundleId: bundleId, tccDbUser: tccDbUser, tccDbSystem: tccDbSystem)
+            print("🔍 TCCManager.checkPermissions for \(bundleId): camera=\(camera), microphone=\(microphone)")
             return PermissionStatus(camera: camera, microphone: microphone, isLoading: false)
         }.value
     }
@@ -159,14 +160,19 @@ class TCCManager {
         }
         
         let action = grant ? "add" : "reset"
-        let command = "\(tccplusPath) \(action) \(service) \(bundleId)"
+        // Escape the path and bundleId for shell execution (like Electron does)
+        let escapedPath = tccplusPath.replacingOccurrences(of: " ", with: "\\ ")
+        let escapedBundleId = bundleId.replacingOccurrences(of: "\"", with: "\\\"")
+        let command = "\"\(tccplusPath)\" \(action) \(service) \"\(bundleId)\""
         print("🔧 TCCManager: Executing command: \(command)")
         print("   Binary path: \(tccplusPath)")
         print("   Arguments: [\(action), \(service), \(bundleId)]")
         
+        // Run through shell like Electron does (using /bin/bash)
+        // This ensures proper path handling and environment setup
         let process = Process()
-        process.executableURL = URL(fileURLWithPath: tccplusPath)
-        process.arguments = [action, service, bundleId]
+        process.executableURL = URL(fileURLWithPath: "/bin/bash")
+        process.arguments = ["-c", command]
         
         let outputPipe = Pipe()
         let errorPipe = Pipe()

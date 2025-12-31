@@ -136,8 +136,14 @@ class AppListViewModel: ObservableObject {
     func refreshPermissions(for appPath: String) async {
         guard let index = apps.firstIndex(where: { $0.path == appPath }) else { return }
         
+        // Wait a bit longer for TCC database to fully update
+        // macOS TCC database sometimes takes a moment to reflect changes
+        try? await Task.sleep(nanoseconds: 500_000_000) // 500ms
+        
         // Query SQLite database for latest permissions
         let updatedPermissions = await tccManager.checkPermissions(for: appPath)
+        print("🔍 Refreshed permissions for \(appPath): camera=\(updatedPermissions.camera), microphone=\(updatedPermissions.microphone)")
+        
         // Create a new AppInfo with updated permissions to trigger SwiftUI update
         var updatedApp = apps[index]
         updatedApp.permissions = updatedPermissions
@@ -183,22 +189,23 @@ class AppListViewModel: ObservableObject {
             try await tccManager.toggleCameraPermission(for: appPath, grant: grant)
             
             // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms - give TCC database time to update
             
-            // Refresh permissions with retries (matching Electron: 2 retries)
-            var retries = 3
+            // Refresh permissions with retries
+            var retries = 5
             var success = false
             while retries > 0 && !success {
                 await refreshPermissions(for: appPath)
                 
                 let currentPermission = apps[index].permissions.camera
+                print("   Current camera permission: \(currentPermission), expected: \(grant)")
                 if currentPermission == grant {
                     success = true
                     print("✅ Camera permission successfully \(grant ? "granted" : "revoked")")
                 } else {
                     print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
-                    // Wait a bit more and retry
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    // Wait longer between retries
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                 }
                 retries -= 1
             }
@@ -234,22 +241,23 @@ class AppListViewModel: ObservableObject {
             try await tccManager.toggleMicrophonePermission(for: appPath, grant: grant)
             
             // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
+            try? await Task.sleep(nanoseconds: 500_000_000) // 500ms - give TCC database time to update
             
-            // Refresh permissions with retries (matching Electron: 2 retries)
-            var retries = 3
+            // Refresh permissions with retries
+            var retries = 5
             var success = false
             while retries > 0 && !success {
                 await refreshPermissions(for: appPath)
                 
                 let currentPermission = apps[index].permissions.microphone
+                print("   Current microphone permission: \(currentPermission), expected: \(grant)")
                 if currentPermission == grant {
                     success = true
                     print("✅ Microphone permission successfully \(grant ? "granted" : "revoked")")
                 } else {
                     print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
-                    // Wait a bit more and retry
-                    try? await Task.sleep(nanoseconds: 300_000_000)
+                    // Wait longer between retries
+                    try? await Task.sleep(nanoseconds: 500_000_000)
                 }
                 retries -= 1
             }
