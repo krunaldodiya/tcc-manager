@@ -148,28 +148,57 @@ class TCCManager {
         let tccplusPath = findTCCPlusPath()
         
         guard let tccplusPath = tccplusPath else {
+            print("❌ TCCManager: tccplus binary not found")
             throw TCCError.tccplusNotFound
         }
         
+        // Verify binary is executable
+        guard FileManager.default.isExecutableFile(atPath: tccplusPath) else {
+            print("❌ TCCManager: tccplus binary is not executable at: \(tccplusPath)")
+            throw TCCError.executionFailed("tccplus binary is not executable")
+        }
+        
         let action = grant ? "add" : "reset"
+        let command = "\(tccplusPath) \(action) \(service) \(bundleId)"
+        print("🔧 TCCManager: Executing command: \(command)")
+        print("   Binary path: \(tccplusPath)")
+        print("   Arguments: [\(action), \(service), \(bundleId)]")
+        
         let process = Process()
         process.executableURL = URL(fileURLWithPath: tccplusPath)
         process.arguments = [action, service, bundleId]
         
-        let pipe = Pipe()
-        process.standardOutput = pipe
-        process.standardError = pipe
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
         
         do {
             try process.run()
             process.waitUntilExit()
             
+            let outputData = outputPipe.fileHandleForReading.readDataToEndOfFile()
+            let errorData = errorPipe.fileHandleForReading.readDataToEndOfFile()
+            let output = String(data: outputData, encoding: .utf8) ?? ""
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+            
+            print("   Exit status: \(process.terminationStatus)")
+            if !output.isEmpty {
+                print("   stdout: \(output)")
+            }
+            if !errorOutput.isEmpty {
+                print("   stderr: \(errorOutput)")
+            }
+            
             if process.terminationStatus != 0 {
-                let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-                let errorMessage = String(data: errorData, encoding: .utf8) ?? "Unknown error"
-                throw TCCError.executionFailed(errorMessage)
+                print("❌ TCCManager: tccplus failed with status \(process.terminationStatus)")
+                let errorMsg = errorOutput.isEmpty ? output : errorOutput
+                throw TCCError.executionFailed("tccplus exited with status \(process.terminationStatus): \(errorMsg)")
+            } else {
+                print("✅ TCCManager: tccplus executed successfully")
             }
         } catch {
+            print("❌ TCCManager: Failed to execute tccplus: \(error.localizedDescription)")
             throw TCCError.executionFailed(error.localizedDescription)
         }
     }

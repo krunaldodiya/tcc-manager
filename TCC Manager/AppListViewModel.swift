@@ -176,15 +176,17 @@ class AppListViewModel: ObservableObject {
         guard let index = apps.firstIndex(where: { $0.path == appPath }) else { return }
         
         updatingPermissions.insert(appPath)
+        errorMessage = nil
         
         do {
+            print("🔄 Toggling camera permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleCameraPermission(for: appPath, grant: grant)
             
             // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
             
             // Refresh permissions with retries (matching Electron: 2 retries)
-            var retries = 2
+            var retries = 3
             var success = false
             while retries > 0 && !success {
                 await refreshPermissions(for: appPath)
@@ -192,24 +194,29 @@ class AppListViewModel: ObservableObject {
                 let currentPermission = apps[index].permissions.camera
                 if currentPermission == grant {
                     success = true
+                    print("✅ Camera permission successfully \(grant ? "granted" : "revoked")")
                 } else {
+                    print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
                     // Wait a bit more and retry
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    try? await Task.sleep(nanoseconds: 300_000_000)
                 }
                 retries -= 1
             }
             
-            // If we still didn't get the right value, do a full reload as fallback
+            // Only reload if we really couldn't verify the change
+            // But don't reload immediately - just show error
             if !success {
-                await reloadAllApps()
+                print("⚠️ Could not verify camera permission change after retries")
+                errorMessage = "Permission change may not have taken effect. Please refresh to verify."
             }
             
             updatingPermissions.remove(appPath)
             
-            // Update cache after successful permission change
+            // Update cache after permission change (even if verification failed)
             configManager.saveInstalledApps(apps)
         } catch {
             updatingPermissions.remove(appPath)
+            print("❌ Failed to toggle camera permission: \(error.localizedDescription)")
             // Refresh to show actual state
             await refreshPermissions(for: appPath)
             errorMessage = "Failed to \(grant ? "grant" : "revoke") camera permission: \(error.localizedDescription)"
@@ -220,15 +227,17 @@ class AppListViewModel: ObservableObject {
         guard let index = apps.firstIndex(where: { $0.path == appPath }) else { return }
         
         updatingPermissions.insert(appPath)
+        errorMessage = nil
         
         do {
+            print("🔄 Toggling microphone permission: \(grant ? "grant" : "revoke") for \(appPath)")
             try await tccManager.toggleMicrophonePermission(for: appPath, grant: grant)
             
             // Wait a bit for TCC database to update
-            try? await Task.sleep(nanoseconds: 200_000_000) // 200ms
+            try? await Task.sleep(nanoseconds: 300_000_000) // 300ms
             
             // Refresh permissions with retries (matching Electron: 2 retries)
-            var retries = 2
+            var retries = 3
             var success = false
             while retries > 0 && !success {
                 await refreshPermissions(for: appPath)
@@ -236,24 +245,29 @@ class AppListViewModel: ObservableObject {
                 let currentPermission = apps[index].permissions.microphone
                 if currentPermission == grant {
                     success = true
+                    print("✅ Microphone permission successfully \(grant ? "granted" : "revoked")")
                 } else {
+                    print("⏳ Waiting for permission to update... (retries left: \(retries - 1))")
                     // Wait a bit more and retry
-                    try? await Task.sleep(nanoseconds: 200_000_000)
+                    try? await Task.sleep(nanoseconds: 300_000_000)
                 }
                 retries -= 1
             }
             
-            // If we still didn't get the right value, do a full reload as fallback
+            // Only reload if we really couldn't verify the change
+            // But don't reload immediately - just show error
             if !success {
-                await reloadAllApps()
+                print("⚠️ Could not verify microphone permission change after retries")
+                errorMessage = "Permission change may not have taken effect. Please refresh to verify."
             }
             
             updatingPermissions.remove(appPath)
             
-            // Update cache after successful permission change
+            // Update cache after permission change (even if verification failed)
             configManager.saveInstalledApps(apps)
         } catch {
             updatingPermissions.remove(appPath)
+            print("❌ Failed to toggle microphone permission: \(error.localizedDescription)")
             // Refresh to show actual state
             await refreshPermissions(for: appPath)
             errorMessage = "Failed to \(grant ? "grant" : "revoke") microphone permission: \(error.localizedDescription)"
