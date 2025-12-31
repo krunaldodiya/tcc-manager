@@ -51,21 +51,23 @@ class TCCManager {
             return PermissionStatus()
         }
         
-        let camera = checkPermission(service: "kTCCServiceCamera", bundleId: bundleId)
-        let microphone = checkPermission(service: "kTCCServiceMicrophone", bundleId: bundleId)
-        
-        return PermissionStatus(camera: camera, microphone: microphone, isLoading: false)
+        // Run database queries on a background thread to avoid blocking
+        return await Task.detached { [tccDbUser, tccDbSystem] in
+            let camera = Self.checkPermission(service: "kTCCServiceCamera", bundleId: bundleId, tccDbUser: tccDbUser, tccDbSystem: tccDbSystem)
+            let microphone = Self.checkPermission(service: "kTCCServiceMicrophone", bundleId: bundleId, tccDbUser: tccDbUser, tccDbSystem: tccDbSystem)
+            return PermissionStatus(camera: camera, microphone: microphone, isLoading: false)
+        }.value
     }
     
-    private func checkPermission(service: String, bundleId: String) -> Bool {
-        // Check user database first
+    nonisolated private static func checkPermission(service: String, bundleId: String, tccDbUser: URL, tccDbSystem: URL) -> Bool {
+        // Check user database first (most common location)
         if FileManager.default.fileExists(atPath: tccDbUser.path) {
             if let result = queryTCCDatabase(at: tccDbUser, service: service, bundleId: bundleId) {
                 return result == 2 // 2 means granted
             }
         }
         
-        // Check system database
+        // Check system database as fallback
         if FileManager.default.fileExists(atPath: tccDbSystem.path) {
             if let result = queryTCCDatabase(at: tccDbSystem, service: service, bundleId: bundleId) {
                 return result == 2 // 2 means granted
@@ -75,10 +77,14 @@ class TCCManager {
         return false
     }
     
-    private func queryTCCDatabase(at url: URL, service: String, bundleId: String) -> Int? {
+    nonisolated private static func queryTCCDatabase(at url: URL, service: String, bundleId: String) -> Int? {
         var db: OpaquePointer?
         
-        guard sqlite3_open(url.path, &db) == SQLITE_OK else {
+        // Try to open database - this requires Full Disk Access
+        let dbPath = url.path
+        let openResult = sqlite3_open(dbPath, &db)
+        guard openResult == SQLITE_OK else {
+            // Database might be locked or inaccessible (needs Full Disk Access)
             return nil
         }
         
@@ -97,11 +103,23 @@ class TCCManager {
             sqlite3_finalize(statement)
         }
         
-        sqlite3_bind_text(statement, 1, service, -1, nil)
-        sqlite3_bind_text(statement, 2, bundleId, -1, nil)
+        // Bind parameters - ensure strings are properly null-terminated
+        // Using -1 for length means SQLite computes the length automatically
+        // Using nil for destructor means SQLite won't free the string (Swift owns it)
+        let serviceCString = service.cString(using: .utf8)
+        let bundleIdCString = bundleId.cString(using: .utf8)
         
-        if sqlite3_step(statement) == SQLITE_ROW {
-            return Int(sqlite3_column_int(statement, 0))
+        guard let serviceCString = serviceCString,
+              let bundleIdCString = bundleIdCString,
+              sqlite3_bind_text(statement, 1, serviceCString, -1, nil) == SQLITE_OK,
+              sqlite3_bind_text(statement, 2, bundleIdCString, -1, nil) == SQLITE_OK else {
+            return nil
+        }
+        
+        let stepResult = sqlite3_step(statement)
+        if stepResult == SQLITE_ROW {
+            let authValue = sqlite3_column_int(statement, 0)
+            return Int(authValue)
         }
         
         return nil
@@ -165,9 +183,30 @@ class TCCManager {
             }
         }
         
-        // Check in common locations (for development)
+        // Check in app bundle (alternative location)
+        let bundlePath = Bundle.main.bundlePath
+        let bundleResourcePath = (bundlePath as NSString).appendingPathComponent("Contents/Resources/bin/tccplus")
+        if FileManager.default.fileExists(atPath: bundleResourcePath) {
+            return bundleResourcePath
+        }
+        
+        // Check in project source directory (for development when running from Xcode)
+        // Get the source file location and work backwards to find bin directory
+        let sourceFile = #file
+        let sourceFileURL = URL(fileURLWithPath: sourceFile)
+        let currentPath = sourceFileURL.deletingLastPathComponent().path
+        
+        // The source file is in "TCC Manager/TCC Manager/TCCManager.swift"
+        // So we need to go to "TCC Manager/TCC Manager/bin/tccplus"
+        let binPath = (currentPath as NSString).appendingPathComponent("bin/tccplus")
+        if FileManager.default.fileExists(atPath: binPath) {
+            return binPath
+        }
+        
+        // Check in common development locations
         let homeDir = FileManager.default.homeDirectoryForCurrentUser.path
         let possiblePaths = [
+            (homeDir as NSString).appendingPathComponent("WorkSpace/Code/TCC Manager/TCC Manager/bin/tccplus"),
             "/usr/local/bin/tccplus",
             "/opt/homebrew/bin/tccplus",
             (homeDir as NSString).appendingPathComponent("bin/tccplus"),
